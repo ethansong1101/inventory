@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>東門庫存盤點系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        /* 低於庫存反紅樣式 */
+        .low-stock-row { background-color: #fee2e2 !important; color: #b91c1c; font-weight: bold; }
+        .header-bg { background: linear-gradient(135deg, #1e293b 0%, #334155 100%); }
+        .info-text { font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; }
+        .safety-tag { color: #2563eb; font-size: 0.75rem; font-weight: normal; margin-left: 4px; }
+        .unit-text { font-size: 0.75rem; font-weight: 900; color: #475569; }
+        .iphone-container { max-width: 430px; margin-left: auto; margin-right: auto; }
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen p-2 info-text">
+
+    <div id="captureArea" class="iphone-container shadow-2xl rounded-2xl overflow-hidden mb-10 bg-white border border-gray-100">
+        <!-- 頂部標題區域 -->
+        <div class="header-bg text-white p-6 text-center">
+            <h1 class="text-2xl font-bold tracking-widest mb-1">東門庫存盤點系統</h1>
+            <p id="displayDate" class="text-sm opacity-90"></p>
+        </div>
+
+        <div class="p-4">
+            <!-- 盤點人員與廠商資訊區塊 -->
+            <div class="mb-6 border-b-2 border-gray-100 pb-4">
+                <div class="flex items-center mb-4">
+                    <label class="text-xl font-bold mr-2 text-gray-800">盤點人員：</label>
+                    <input type="text" id="signer" class="text-xl border-b-2 border-gray-300 focus:border-blue-600 outline-none px-1 w-full bg-transparent" placeholder="請填寫">
+                </div>
+
+                <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <h3 class="text-sm font-bold text-slate-700 mb-1">叫貨廠商資訊</h3>
+                    <div class="grid grid-cols-1 gap-y-0.5 text-sm text-slate-500">
+                        <div class="flex justify-between"><span>養生堂</span> <span>03-6661399</span></div>
+                        <div class="flex justify-between"><span>聯慶</span> <span>03-5225353</span></div>
+                        <div class="flex justify-between"><span>ＸＯ醬</span> <span>06-9273596</span></div>
+                        <div class="flex justify-between"><span>北浦辣椒</span> <span>0927881136</span></div>
+                        <div class="flex justify-between"><span>中華紙杯</span> <span>03-5436430</span></div>
+                        <div class="flex justify-between"><span>千潔紙杯</span> <span>03-5364988</span></div>
+                        <p class="text-xs text-blue-500 mt-1 font-medium">其餘廠商於 LINE 官方聯絡</p>
+                    </div>
+                </div>
+                
+                <div class="flex gap-2 mt-4">
+                    <button onclick="copyData()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg shadow-md transition text-sm">複製整頁資料</button>
+                    <button onclick="exportExcel()" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2 rounded-lg shadow-md transition text-sm">匯出 Excel</button>
+                </div>
+            </div>
+
+            <!-- 盤點列表動態插入 -->
+            <div id="inventoryLists"></div>
+        </div>
+    </div>
+
+    <script>
+        const todayStr = new Date().toLocaleDateString('zh-TW', {year: 'numeric', month: 'long', day: 'numeric'});
+        document.getElementById('displayDate').innerText = `盤點日期：${todayStr}`;
+
+        // 庫存數據配置
+        const sections = [
+            {
+                name: "1F", alert: true, hideSafety: true,
+                items: [
+                    { n: "麵", u: "(袋)", s: 0 }, 
+                    { n: "日式醬", u: "(瓶)", s: 0 }, 
+                    { n: "美乃滋", u: "(瓶)", s: 0 },
+                    { n: "唐揚雞粉", u: "(袋)", s: 0 }, 
+                    { n: "高麗菜", u: "(箱)", s: 0 }, 
+                    { n: "高麗菜", u: "(袋)", s: 0 }, 
+                    { n: "高麗菜", u: "(顆)", s: 0 },
+                    { n: "豆漿 有糖", u: "(包)", s: 0 },
+                    { n: "豆漿 無糖", u: "(包)", s: 0 }, 
+                    { n: "新炒鍋", u: "(個)", s: 0 }
+                ]
+            },
+            {
+                name: "B1", alert: true, hideSafety: false,
+                items: [
+                    { n: "麵", u: "(袋)", s: 15 }, 
+                    { n: "日式醬", u: "(箱)", s: 2 },
+                    { n: "美乃滋", u: "(瓶)", s: 5 }, 
+                    { n: "唐揚雞粉", u: "(箱)", s: 1 },
+                    { n: "豆漿 有糖", u: "(包)", s: 10 }, 
+                    { n: "豆漿 無糖", u: "(包)", s: 10 },
+                    { n: "新炒鍋", u: "(個)", s: 4 }
+                ]
+            },
+            {
+                name: "B1冷凍", alert: true, hideSafety: false,
+                items: [
+                    { n: "雞塊", u: "(包)", s: 4 }, 
+                    { n: "薯條（完整）", u: "(袋)", s: 2 },
+                    { n: "薯條（分裝）", u: "(包)", s: 2 }, 
+                    { n: "可樂餅", u: "(包)", s: 3 },
+                    { n: "炸蝦", u: "(盒)", s: 2 }, 
+                    { n: "甜不辣", u: "(分裝)", s: 2 },
+                    { n: "花枝丸", u: "(包)", s: 2 }, 
+                    { n: "雞排", u: "(袋)", s: 2 },
+                    { n: "超厚豬排", u: "(袋)", s: 10 }, 
+                    { n: "鹽酥杏鮑菇", u: "(袋)", s: 4 },
+                    { n: "唐揚雞", u: "(袋)", s: 10 }, 
+                    { n: "豬肉", u: "(袋)", s: 10 },
+                    { n: "牛肉", u: "(袋)", s: 5 }
+                ]
+            },
+            {
+                name: "B1備品", alert: true, hideSafety: false,
+                items: [
+                    { n: "XO醬", u: "(罐)", s: 12 }, 
+                    { n: "辣椒醬", u: "(罐)", s: 10 }, 
+                    { n: "番茄", u: "(罐)", s: 1 },
+                    { n: "唐揚雞粉", u: "(箱)", s: 1 }, 
+                    { n: "泰式醬", u: "(罐)", s: 1 }, 
+                    { n: "乾劑", u: "(瓶)", s: 1 }, 
+                    { n: "洗劑", u: "(瓶)", s: 1 },
+                    { n: "LOC 清潔用", u: "(瓶)", s: 2 }, 
+                    { n: "LOC 廚房用", u: "(瓶)", s: 2 },
+                    { n: "LOC 洗碗用", u: "(瓶)", s: 2 },
+                    { n: "熱感應紙", u: "(卷)", s: 20 }, 
+                    { n: "發票紙捲", u: "(卷)", s: 20 }, 
+                    { n: "方盒", u: "(條)", s: 10 },
+                    { n: "方盒蓋", u: "(條)", s: 10 }
+                ]
+            }
+        ];
+
+        const container = document.getElementById('inventoryLists');
+
+        // 生成表格
+        sections.forEach(sec => {
+            let tableHtml = `
+                <div class="mb-8">
+                    <h2 class="bg-slate-800 px-3 py-1.5 font-bold text-white rounded-lg text-base shadow-sm inline-block">${sec.name}</h2>
+                    <table class="w-full text-left mt-2 border-collapse" data-sec="${sec.name}">
+                        <thead>
+                            <tr class="text-xs text-gray-400 border-b">
+                                <th class="py-2 px-1">品項</th><th class="w-24 text-center">數量</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            sec.items.forEach(item => {
+                const safetyLabel = sec.hideSafety ? '' : `<span class="safety-tag">最低:${item.s}</span>`;
+                tableHtml += `
+                    <tr class="border-b border-gray-50 last:border-0 transition">
+                        <td class="py-3 px-1">
+                            <span class="text-gray-800 font-medium text-sm item-name">${item.n}</span>
+                            <span class="unit-text ml-0.5">${item.u}</span>
+                            ${safetyLabel}
+                        </td>
+                        <td class="py-1 text-right">
+                            <input type="number" 
+                                class="w-20 border border-gray-200 rounded p-1 text-center font-bold text-blue-800 text-lg focus:border-blue-500 outline-none qty-input"
+                                data-name="${item.n}"
+                                data-unit="${item.u}"
+                                data-safety="${item.s}" 
+                                data-alert="${sec.alert}"
+                                placeholder="0"
+                                oninput="validate(this)">
+                        </td>
+                    </tr>
+                `;
+            });
+            tableHtml += `</tbody></table></div>`;
+            container.innerHTML += tableHtml;
+        });
+
+        // 數量驗證
+        function validate(el) {
+            const val = parseFloat(el.value);
+            const safety = parseFloat(el.dataset.safety);
+            const needsAlert = el.dataset.alert === "true";
+            const row = el.closest('tr');
+            if (needsAlert && !isNaN(val) && val < safety) {
+                row.classList.add('low-stock-row');
+            } else {
+                row.classList.remove('low-stock-row');
+            }
+        }
+
+        // 複製資料到剪貼簿 (包含 🚨 邏輯)
+        async function copyData() {
+            const signer = document.getElementById('signer').value || "未簽名";
+            let text = `📦 東門庫存盤點回報\n📅 日期：${todayStr}\n👤 人員：${signer}\n━━━━━━━━━━━━━━\n`;
+            
+            document.querySelectorAll('table').forEach(table => {
+                text += `\n【${table.dataset.sec}】\n`;
+                table.querySelectorAll('tbody tr').forEach(row => {
+                    const name = row.querySelector('.item-name').innerText;
+                    const unit = row.querySelector('.unit-text').innerText;
+                    const input = row.querySelector('.qty-input');
+                    const val = input.value;
+                    
+                    if(val !== "") {
+                        const isLow = row.classList.contains('low-stock-row');
+                        // 若低於庫存，名稱前加上 🚨
+                        const prefix = isLow ? `🚨 ` : ``;
+                        text += `${prefix}${name}：${val} ${unit}\n`;
+                    }
+                });
+            });
+
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast("盤點資料已複製！");
+            } catch (err) {
+                alert("複製失敗，請手動選取文字");
+            }
+        }
+
+        function exportExcel() {
+            const signer = document.getElementById('signer').value || "未簽名";
+            const exportData = [
+                ["東門庫存盤點表"], ["盤點日期", todayStr], ["盤點人員", signer], [],
+                ["區域", "品項", "盤點數量", "單位", "最低庫存量", "狀態"]
+            ];
+
+            document.querySelectorAll('table').forEach(table => {
+                const area = table.dataset.sec;
+                table.querySelectorAll('tbody tr').forEach(row => {
+                    const name = row.querySelector('.item-name').innerText;
+                    const unit = row.querySelector('.unit-text').innerText;
+                    const input = row.querySelector('.qty-input');
+                    const qty = input.value;
+                    const safety = input.dataset.safety;
+                    const status = row.classList.contains('low-stock-row') ? "需叫貨" : "正常";
+                    exportData.push([area, name, qty, unit, safety, status]);
+                });
+            });
+
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.aoa_to_sheet(exportData);
+            XLSX.utils.book_append_sheet(wb, ws, "庫存數據");
+            XLSX.writeFile(wb, `東門盤點_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+
+        function showToast(msg) {
+            const toast = document.createElement('div');
+            toast.className = "fixed bottom-10 left-1/2 -translate-x-1/2 bg-black/80 text-white px-6 py-2 rounded-full text-sm z-50";
+            toast.innerText = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
+    </script>
+</body>
+</html>
